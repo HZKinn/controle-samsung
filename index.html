@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Controle Samsung</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  body {
+    margin: 0; background: #111; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+  }
+  h1 { font-size: 20px; margin: 16px 0 4px; }
+  #status { color: #888; font-size: 13px; margin-bottom: 14px; text-align: center; min-height: 16px; }
+  .setup { width: 100%; max-width: 340px; }
+  .setup input {
+    width: 100%; background: #1c1c1e; color: #fff; border: none; padding: 12px;
+    border-radius: 10px; font-size: 16px; margin-bottom: 10px;
+  }
+  .setup button, .primary {
+    width: 100%; background: #0a84ff; color: #fff; border: none; padding: 14px;
+    border-radius: 12px; font-size: 16px; font-weight: 700; margin-top: 4px;
+  }
+  .hint { color: #666; font-size: 12px; margin-top: 8px; line-height: 1.4; }
+  .hint a { color: #0a84ff; }
+  .remote { display: none; flex-direction: column; align-items: center; gap: 16px; width: 100%; max-width: 320px; }
+  .remote.active { display: flex; }
+  .setup.hidden { display: none; }
+  .row { display: flex; gap: 12px; }
+  .dpad { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .dpad .row { align-items: center; }
+  button.btn {
+    background: #1c1c1e; color: #fff; border: none; width: 62px; height: 62px;
+    border-radius: 31px; font-size: 18px; display: flex; align-items: center; justify-content: center;
+  }
+  button.btn:active { background: #333; }
+  .power { background: #ff453a !important; }
+  .ok { background: #0a84ff !important; }
+  .wide { width: 130px; border-radius: 16px; font-size: 14px; }
+  .link { color: #0a84ff; font-size: 13px; margin-top: 20px; background: none; border: none; }
+</style>
+</head>
+<body>
+  <h1>📺 Controle Samsung</h1>
+  <div id="status">desconectado</div>
+
+  <div class="setup" id="setup">
+    <div class="hint" style="margin-bottom:12px;">
+      <b>Antes de usar pela 1ª vez:</b> abra
+      <span id="certLinkWrap">https://[IP-DA-TV]:8002</span> aqui no Safari e toque em
+      "Avançar/Visitar site" no aviso de certificado. Só precisa fazer isso uma vez
+      (ou de novo se a TV reiniciar).
+    </div>
+    <input id="ip" type="text" inputmode="decimal" placeholder="IP da TV, ex: 192.168.0.15" autocapitalize="none" autocorrect="off">
+    <button onclick="connect()">Conectar</button>
+  </div>
+
+  <div class="remote" id="remote">
+    <button class="btn power" onclick="send('KEY_POWER')">⏻</button>
+
+    <div class="dpad">
+      <button class="btn" onclick="send('KEY_UP')">▲</button>
+      <div class="row">
+        <button class="btn" onclick="send('KEY_LEFT')">◀</button>
+        <button class="btn ok" onclick="send('KEY_ENTER')">OK</button>
+        <button class="btn" onclick="send('KEY_RIGHT')">▶</button>
+      </div>
+      <button class="btn" onclick="send('KEY_DOWN')">▼</button>
+    </div>
+
+    <div class="row">
+      <button class="btn wide" onclick="send('KEY_RETURN')">◄ Voltar</button>
+      <button class="btn wide" onclick="send('KEY_HOME')">Início</button>
+    </div>
+    <div class="row">
+      <button class="btn wide" onclick="send('KEY_MENU')">☰ Menu</button>
+      <button class="btn wide" onclick="send('KEY_SOURCE')">Fonte</button>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="send('KEY_VOLDOWN')">Vol −</button>
+      <button class="btn" onclick="send('KEY_MUTE')">🔇</button>
+      <button class="btn" onclick="send('KEY_VOLUP')">Vol +</button>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="send('KEY_CH_DOWN')">Ch −</button>
+      <button class="btn" onclick="send('KEY_CH_UP')">Ch +</button>
+    </div>
+    <div class="row">
+      <button class="btn wide" onclick="send('KEY_PLAY')">▶ Play</button>
+      <button class="btn wide" onclick="send('KEY_PAUSE')">⏸ Pause</button>
+    </div>
+
+    <button class="link" onclick="disconnect()">Trocar de TV</button>
+  </div>
+
+<script>
+let socket = null;
+const statusEl = document.getElementById('status');
+
+function b64(str) { return btoa(str); }
+
+function setStatus(t) { statusEl.textContent = t; }
+
+function loadSaved() {
+  const ip = localStorage.getItem('tvIp');
+  const token = localStorage.getItem('tvToken');
+  if (ip) {
+    document.getElementById('ip').value = ip;
+    if (token) connect(); // auto-reconnect silently if already paired
+  }
+}
+
+function connect() {
+  const ip = document.getElementById('ip').value.trim();
+  if (!ip) { alert('Digite o IP da TV'); return; }
+  localStorage.setItem('tvIp', ip);
+  const token = localStorage.getItem('tvToken');
+
+  setStatus('conectando...');
+  const name = b64('Controle Web');
+  let url = `wss://${ip}:8002/api/v2/channels/samsung.remote.control?name=${name}`;
+  if (token) url += `&token=${token}`;
+
+  try { socket && socket.close(); } catch (e) {}
+  socket = new WebSocket(url);
+
+  socket.onopen = () => {
+    if (!token) setStatus('aceite o pedido na tela da TV...');
+  };
+
+  socket.onmessage = (msg) => {
+    const data = JSON.parse(msg.data);
+    if (data.event === 'ms.channel.connect') {
+      if (data.data && data.data.token) localStorage.setItem('tvToken', data.data.token);
+      setStatus('conectado ✓');
+      document.getElementById('setup').classList.add('hidden');
+      document.getElementById('remote').classList.add('active');
+    }
+    if (data.event === 'ms.channel.unauthorized') {
+      setStatus('pareamento recusado na TV');
+    }
+  };
+
+  socket.onerror = () => {
+    setStatus('erro de conexão — confira se você já aceitou o certificado no Safari (veja instrução acima) e se está na mesma Wi-Fi da TV');
+  };
+
+  socket.onclose = () => {
+    if (statusEl.textContent === 'conectado ✓') setStatus('desconectado');
+  };
+}
+
+function disconnect() {
+  try { socket && socket.close(); } catch (e) {}
+  localStorage.removeItem('tvToken');
+  document.getElementById('setup').classList.remove('hidden');
+  document.getElementById('remote').classList.remove('active');
+  setStatus('desconectado');
+}
+
+function send(key) {
+  if (!socket || socket.readyState !== 1) { setStatus('não conectado'); return; }
+  socket.send(JSON.stringify({
+    method: 'ms.remote.control',
+    params: { Cmd: 'Click', DataOfCmd: key, Option: 'false', TypeOfRemote: 'SendRemoteKey' }
+  }));
+}
+
+loadSaved();
+</script>
+</body>
+</html>
